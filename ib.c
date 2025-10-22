@@ -4,8 +4,7 @@
 #include "debug.h"
 #include "ib.h"
 
-int modify_qp_to_rts(struct ibv_qp *qp, uint32_t target_qp_num,
-                     uint16_t target_lid) {
+int modify_qp_to_rts(struct ibv_qp *qp, struct QPInfo *qp_info) {
   int ret = 0;
 
   /* change QP state to INIT */
@@ -15,7 +14,7 @@ int modify_qp_to_rts(struct ibv_qp *qp, uint32_t target_qp_num,
         .pkey_index = 0,
         .port_num = IB_PORT,
         .qp_access_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
-                           IBV_ACCESS_REMOTE_ATOMIC | IBV_ACCESS_REMOTE_WRITE,
+                           IBV_ACCESS_REMOTE_WRITE,
     };
 
     ret = ibv_modify_qp(qp, &qp_attr,
@@ -23,21 +22,25 @@ int modify_qp_to_rts(struct ibv_qp *qp, uint32_t target_qp_num,
                             IBV_QP_ACCESS_FLAGS);
     check(ret == 0, "Failed to modify qp to INIT.");
   }
-
+  printf("Finished modify qp to INIT\n");
   /* Change QP state to RTR */
   {
     struct ibv_qp_attr qp_attr = {
         .qp_state = IBV_QPS_RTR,
         .path_mtu = IB_MTU,
-        .dest_qp_num = target_qp_num,
         .rq_psn = 0,
         .max_dest_rd_atomic = 1,
         .min_rnr_timer = 12,
-        .ah_attr.is_global = 0,
-        .ah_attr.dlid = target_lid,
+        .ah_attr.is_global = 1,
+        .ah_attr.grh.dgid.global.subnet_prefix = qp_info->spn,
+        .ah_attr.grh.dgid.global.interface_id = qp_info->iid,
+        .ah_attr.grh.flow_label = 0,
+        .ah_attr.grh.sgid_index = 3,
+        .ah_attr.grh.hop_limit = 255,
         .ah_attr.sl = IB_SL,
         .ah_attr.src_path_bits = 0,
         .ah_attr.port_num = IB_PORT,
+        .dest_qp_num = qp_info->qp_num,
     };
 
     ret = ibv_modify_qp(qp, &qp_attr,
@@ -46,12 +49,13 @@ int modify_qp_to_rts(struct ibv_qp *qp, uint32_t target_qp_num,
                             IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
     check(ret == 0, "Failed to change qp to rtr.");
   }
+  printf("Finished modify qp to RTR\n");
 
   /* Change QP state to RTS */
   {
     struct ibv_qp_attr qp_attr = {
         .qp_state = IBV_QPS_RTS,
-        .timeout = 14,
+        .timeout = 20,
         .retry_cnt = 7,
         .rnr_retry = 7,
         .sq_psn = 0,
@@ -64,6 +68,7 @@ int modify_qp_to_rts(struct ibv_qp *qp, uint32_t target_qp_num,
                             IBV_QP_MAX_QP_RD_ATOMIC);
     check(ret == 0, "Failed to modify qp to RTS.");
   }
+  printf("Finished modify qp to RTS\n");
 
   return 0;
 error:

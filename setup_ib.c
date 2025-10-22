@@ -10,7 +10,7 @@
 
 struct IBRes ib_res;
 
-int connect_qp_server() {
+int connect_qp_server(struct ibv_context *ctx) {
   int ret = 0, n = 0;
   int sockfd = 0;
   int peer_sockfd = 0;
@@ -26,10 +26,21 @@ int connect_qp_server() {
   peer_sockfd = accept(sockfd, (struct sockaddr *)&peer_addr, &peer_addr_len);
   check(peer_sockfd > 0, "Failed to create peer_sockfd");
 
+  union ibv_gid gid;
+  if (ibv_query_gid(ctx, 1 /* port number*/, 3 /* GID INDEX */, &gid)) {
+    return 1;
+  }
+
   /* init local qp_info */
+  local_qp_info.spn = gid.global.subnet_prefix;
+  local_qp_info.iid = gid.global.interface_id;
   local_qp_info.lid = ib_res.port_attr.lid;
   local_qp_info.qp_num = ib_res.qp->qp_num;
 
+  printf(
+      "[Server] Generated local QP info: qp_num=%d, lid=%d, spn=%ld, iid=%ld\n",
+      local_qp_info.qp_num, local_qp_info.lid, local_qp_info.spn,
+      local_qp_info.iid);
   /* get qp_info from client */
   ret = sock_get_qp_info(peer_sockfd, &remote_qp_info);
   check(ret == 0, "Failed to get qp_info from client");
@@ -39,7 +50,12 @@ int connect_qp_server() {
   check(ret == 0, "Failed to send qp_info to client");
 
   /* change send QP state to RTS */
-  ret = modify_qp_to_rts(ib_res.qp, remote_qp_info.qp_num, remote_qp_info.lid);
+  printf("[Server] Received QP info from client: qp_num=%d, lid=%d, spn=%ld, "
+         "iid=%ld\n",
+         remote_qp_info.qp_num, remote_qp_info.lid, remote_qp_info.spn,
+         remote_qp_info.iid);
+
+  ret = modify_qp_to_rts(ib_res.qp, &remote_qp_info);
   check(ret == 0, "Failed to modify qp to rts");
 
   log(LOG_SUB_HEADER, "Start of IB Config");
@@ -70,7 +86,7 @@ error:
   return -1;
 }
 
-int connect_qp_client() {
+int connect_qp_client(struct ibv_context *ctx) {
   int ret = 0, n = 0;
   int peer_sockfd = 0;
   char sock_buf[64] = {'\0'};
@@ -81,19 +97,35 @@ int connect_qp_client() {
       sock_create_connect(config_info.server_name, config_info.sock_port);
   check(peer_sockfd > 0, "Failed to create peer_sockfd");
 
+  union ibv_gid gid;
+  if (ibv_query_gid(ctx, 1 /* port number*/, 3 /* GID INDEX */, &gid)) {
+    return 1;
+  }
+
+  /* init local qp_info */
+  local_qp_info.spn = gid.global.subnet_prefix;
+  local_qp_info.iid = gid.global.interface_id;
   local_qp_info.lid = ib_res.port_attr.lid;
   local_qp_info.qp_num = ib_res.qp->qp_num;
 
   /* send qp_info to server */
+  printf(
+      "[Client] Generated local QP info: qp_num=%d, lid=%d, spn=%ld, iid=%ld\n",
+      local_qp_info.qp_num, local_qp_info.lid, local_qp_info.spn,
+      local_qp_info.iid);
   ret = sock_set_qp_info(peer_sockfd, &local_qp_info);
   check(ret == 0, "Failed to send qp_info to server");
 
   /* get qp_info from server */
   ret = sock_get_qp_info(peer_sockfd, &remote_qp_info);
+  printf("[Client] Received QP info from client: qp_num=%d, lid=%d, spn=%ld, "
+         "iid=%ld\n",
+         remote_qp_info.qp_num, remote_qp_info.lid, remote_qp_info.spn,
+         remote_qp_info.iid);
   check(ret == 0, "Failed to get qp_info from server");
 
   /* change QP state to RTS */
-  ret = modify_qp_to_rts(ib_res.qp, remote_qp_info.qp_num, remote_qp_info.lid);
+  ret = modify_qp_to_rts(ib_res.qp, &remote_qp_info);
   check(ret == 0, "Failed to modify qp to rts");
 
   log(LOG_SUB_HEADER, "IB Config");
@@ -155,31 +187,32 @@ int setup_ib() {
   check(ret == 0, "Failed to query device");
 
   /* create cq */
-  ib_res.cq = ibv_create_cq(ib_res.ctx, ib_res.dev_attr.max_cqe, NULL, NULL, 0);
+  int cq_depth = 1024;
+  ib_res.cq = ibv_create_cq(ib_res.ctx, cq_depth, NULL, NULL, 0);
   check(ib_res.cq != NULL, "Failed to create cq");
 
-  /* create qp */
+  /* conservative QP caps; no SRQ in this example */
   struct ibv_qp_init_attr qp_init_attr = {
       .send_cq = ib_res.cq,
       .recv_cq = ib_res.cq,
       .cap =
           {
-              .max_send_wr = ib_res.dev_attr.max_qp_wr,
-              .max_recv_wr = ib_res.dev_attr.max_qp_wr,
+              .max_send_wr = 1024, /* 256–1024 are usually fine */
+              .max_recv_wr = 1024,
               .max_send_sge = 1,
               .max_recv_sge = 1,
+              .max_inline_data = 0, /* disable inline for now */
           },
       .qp_type = IBV_QPT_RC,
   };
-
   ib_res.qp = ibv_create_qp(ib_res.pd, &qp_init_attr);
   check(ib_res.qp != NULL, "Failed to create qp");
 
   /* connect QP */
   if (config_info.is_server) {
-    ret = connect_qp_server();
+    ret = connect_qp_server(ib_res.ctx);
   } else {
-    ret = connect_qp_client();
+    ret = connect_qp_client(ib_res.ctx);
   }
   check(ret == 0, "Failed to connect qp");
 

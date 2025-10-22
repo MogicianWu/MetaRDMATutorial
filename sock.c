@@ -50,6 +50,28 @@ ssize_t sock_write(int sock_fd, void *buffer, size_t len) {
   return tot_written;
 }
 
+void print_addrinfo(const struct addrinfo *ai) {
+  char host[NI_MAXHOST];
+  char serv[NI_MAXSERV];
+
+  int ret = getnameinfo(ai->ai_addr, ai->ai_addrlen, host, sizeof(host), serv,
+                        sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV);
+  if (ret != 0) {
+    fprintf(stderr, "getnameinfo: %s\n", gai_strerror(ret));
+    return;
+  }
+
+  printf("Address family : %s\n", (ai->ai_family == AF_INET)    ? "IPv4"
+                                  : (ai->ai_family == AF_INET6) ? "IPv6"
+                                                                : "Unknown");
+  printf("Socket type    : %s\n", (ai->ai_socktype == SOCK_STREAM)  ? "TCP"
+                                  : (ai->ai_socktype == SOCK_DGRAM) ? "UDP"
+                                                                    : "Other");
+  printf("Protocol       : %d\n", ai->ai_protocol);
+  printf("Address        : %s\n", host);
+  printf("Port           : %s\n\n", serv);
+}
+
 int sock_create_bind(char *port) {
   struct addrinfo hints;
   struct addrinfo *result, *rp;
@@ -62,14 +84,26 @@ int sock_create_bind(char *port) {
 
   ret = getaddrinfo(NULL, port, &hints, &result);
   check(ret == 0, "getaddrinfo error.");
+  for (rp = result; rp != NULL; rp = rp->ai_next) {
+    sock_fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (sock_fd < 0) {
+      continue;
+    }
+    printf("printing all addr info on server side\n");
+    print_addrinfo(rp);
+  }
 
   for (rp = result; rp != NULL; rp = rp->ai_next) {
     sock_fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (sock_fd < 0) {
       continue;
     }
+    if ((rp->ai_family != AF_INET6))
+      continue;
 
     ret = bind(sock_fd, rp->ai_addr, rp->ai_addrlen);
+    printf("using following addr info\n");
+    print_addrinfo(rp);
     if (ret == 0) {
       /* bind success */
       break;
@@ -143,6 +177,8 @@ int sock_set_qp_info(int sock_fd, struct QPInfo *qp_info) {
 
   tmp_qp_info.lid = htons(qp_info->lid);
   tmp_qp_info.qp_num = htonl(qp_info->qp_num);
+  tmp_qp_info.spn = htonll(qp_info->spn);
+  tmp_qp_info.iid = htonll(qp_info->iid);
 
   n = sock_write(sock_fd, (char *)&tmp_qp_info, sizeof(struct QPInfo));
   check(n == sizeof(struct QPInfo), "write qp_info to socket.");
@@ -162,6 +198,8 @@ int sock_get_qp_info(int sock_fd, struct QPInfo *qp_info) {
 
   qp_info->lid = ntohs(tmp_qp_info.lid);
   qp_info->qp_num = ntohl(tmp_qp_info.qp_num);
+  qp_info->spn = ntohll(tmp_qp_info.spn);
+  qp_info->iid = ntohll(tmp_qp_info.iid);
 
   return 0;
 
