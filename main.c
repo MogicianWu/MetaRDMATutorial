@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "client.h"
 #include "config.h"
@@ -11,25 +12,26 @@ FILE *log_fp = NULL;
 
 int init_env();
 void destroy_env();
-
 int main(int argc, char *argv[]) {
   int ret = 0;
 
-  if (argc == 3) {
+  if (argc == 5) {
     config_info.is_server = false;
     config_info.server_name = argv[1];
-    config_info.sock_port = argv[2];
-  } else if (argc == 2) {
+    config_info.msg_size = atoi(argv[2]);
+    config_info.num_concurr_msgs = atoi(argv[3]);
+    config_info.sock_port = argv[4];
+  } else if (argc == 4) {
     config_info.is_server = true;
-    config_info.sock_port = argv[1];
+    config_info.msg_size = atoi(argv[1]);
+    config_info.num_concurr_msgs = atoi(argv[2]);
+    config_info.sock_port = argv[3];
   } else {
-    printf("Server: %s sock_port\n", argv[0]);
-    printf("Client: %s server_name sock_port\n", argv[0]);
+    printf("Server: %s msg_size num_concurr_msgs sock_port\n", argv[0]);
+    printf("Client: %s server_name msg_size num_concurr_msgs sock_port\n",
+           argv[0]);
     return 0;
   }
-
-  config_info.msg_size = 64;
-  config_info.num_concurr_msgs = 1;
 
   ret = init_env();
   check(ret == 0, "Failed to init env");
@@ -49,7 +51,6 @@ error:
   destroy_env();
   return ret;
 }
-
 int init_env() {
   if (config_info.is_server) {
     log_fp = fopen("server.log", "w");

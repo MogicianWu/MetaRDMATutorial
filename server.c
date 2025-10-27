@@ -48,7 +48,7 @@ void *server_thread(void *arg) {
     ret = post_recv(msg_size, lkey, (uint64_t)buf_ptr, qp, buf_ptr);
     check(ret == 0, "thread[%ld]: failed to post recv", thread_id);
     buf_offset = (buf_offset + msg_size) % buf_size;
-    buf_ptr += buf_offset;
+    buf_ptr = ib_res.ib_buf + buf_offset;
   }
 
   /* signal the client to start */
@@ -62,7 +62,10 @@ void *server_thread(void *arg) {
     if (n < 0) {
       check(0, "thread[%ld]: Failed to poll cq", thread_id);
     }
-
+    if (n > 0) {
+      debug("[Server] polled cq n = %d", n);
+    }
+    int posted_send = 0;
     for (i = 0; i < n; i++) {
       if (wc[i].status != IBV_WC_SUCCESS) {
         if (wc[i].opcode == IBV_WC_SEND) {
@@ -90,9 +93,13 @@ void *server_thread(void *arg) {
         /* echo the message back */
         char *msg_ptr = (char *)wc[i].wr_id;
         post_send(msg_size, lkey, 0, MSG_REGULAR, qp, msg_ptr);
+        posted_send += 1;
 
         /* post a new receive */
         post_recv(msg_size, lkey, wc[i].wr_id, qp, msg_ptr);
+      }
+      if (posted_send > 0) {
+        debug("[Server] polled cq n = %d, posted_send = %d", n, posted_send);
       }
     }
   }
