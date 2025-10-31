@@ -228,7 +228,7 @@ int setup_ib() {
               .max_recv_wr = 8192,
               .max_send_sge = 1,
               .max_recv_sge = 1,
-              .max_inline_data = 0, /* disable inline for now */
+              .max_inline_data = config_info.msg_size,
           },
       .qp_type = IBV_QPT_RC,
   };
